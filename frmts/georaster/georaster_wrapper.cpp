@@ -75,7 +75,9 @@ GeoRasterWrapper::GeoRasterWrapper()
     bUpdate             = false;
     bInitializeIO       = false;
     bFlushMetadata      = false;
-    nSRID               = UNKNOWN_CRS;
+    nSRID               = 0;
+    nExtentSRID         = 0;
+    bGenSpatialIndex    = false;
     nPyramidMaxLevel    = 0;
     nBlockCount         = 0L;
     nGDALBlockBytes     = 0L;
@@ -139,6 +141,11 @@ GeoRasterWrapper::~GeoRasterWrapper()
     if( sCInfo.global_state )
     {
         jpeg_destroy_compress( &sCInfo );
+    }
+
+    if( poConnection )
+    {
+        delete poConnection;
     }
 }
 
@@ -568,16 +575,6 @@ GeoRasterWrapper* GeoRasterWrapper::Open( const char* pszStringId, bool bUpdate 
       CPLDebug("GEOR","eModelCoordLocation = MCL_CENTER");
     }
 
-    CPLDebug("GEOR","Binds( %ld, %d, %f, %f, %f, %f, %f, %f )", 
-                  poGRW->nSRID,
-                  poGRW->eModelCoordLocation,
-                  poGRW->dfXCoefficient[0],
-                  poGRW->dfXCoefficient[1],
-                  poGRW->dfXCoefficient[2],
-                  poGRW->dfYCoefficient[0],
-                  poGRW->dfYCoefficient[1],
-                  poGRW->dfYCoefficient[2] );
-
     //  -------------------------------------------------------------------
     //  Apply ULTCoordinate
     //  -------------------------------------------------------------------
@@ -620,47 +617,6 @@ bool GeoRasterWrapper::Create( char* pszDescription,
         return false;
     }
 
-    char szDescription[OWTEXT];
-    char szCreateBlank[OWTEXT];
-    char szInsert[OWTEXT];
-
-    if( bUpdate == false )
-    {
-        //  ---------------------------------------------------------------
-        //  Description parameters
-        //  ---------------------------------------------------------------
-
-        if ( pszDescription  )
-        {
-            strcpy( szDescription, pszDescription );
-        }
-        else
-        {
-            strcpy( szDescription, CPLSPrintf(
-                "(%s MDSYS.SDO_GEORASTER)", sColumn.c_str() ) );
-        }
-
-        //  ---------------------------------------------------------------
-        //  Insert parameters
-        //  ---------------------------------------------------------------
-
-        if( pszInsert )
-        {
-            if( ! EQUALN( pszInsert, "VALUES", 6 ) )
-            {
-                sValues = CPLSPrintf( "VALUES %s", pszInsert );
-            }
-            else
-            {
-                sValues = pszInsert;
-            }
-        }
-        else
-        {
-            sValues = "VALUES (SDO_GEOR.INIT(NULL,NULL))";
-        }
-    }
-
     //  -------------------------------------------------------------------
     //  Parse RDT/RID from the current szValues
     //  -------------------------------------------------------------------
@@ -684,31 +640,49 @@ bool GeoRasterWrapper::Create( char* pszDescription,
     else
     {
         strcpy( szRID, OWParseSDO_GEOR_INIT( sValues.c_str(), 2 ) );
+
+        if ( EQUAL( szRID, "" ) )
+        {
+            strcpy( szRID, "NULL" );
+        }
     }
 
     //  -------------------------------------------------------------------
-    //  Prepare initialization parameters
+    //  Description parameters
     //  -------------------------------------------------------------------
 
-    if( nRasterBands == 1 )
-    {
-        strcpy( szCreateBlank, CPLSPrintf( "SDO_GEOR.createBlank(20001, "
-            "SDO_NUMBER_ARRAY(0, 0), "
-            "SDO_NUMBER_ARRAY(%d, %d), 0, %s, %s)",
-            nRasterRows, nRasterColumns, szRDT, szRID) );
-    }
-    else
-    {
-        strcpy( szCreateBlank, CPLSPrintf( "SDO_GEOR.createBlank(21001, "
-            "SDO_NUMBER_ARRAY(0, 0, 0), "
-            "SDO_NUMBER_ARRAY(%d, %d, %d), 0, %s, %s)",
-            nRasterRows, nRasterColumns, nRasterBands, szRDT, szRID ) );
-    }
+    char szDescription[OWTEXT];
 
-    if( ! bUpdate )
+    if( bUpdate == false )
     {
-        strcpy( szInsert,
-            OWReplaceString( sValues.c_str(), "SDO_GEOR.INIT", ")", szCreateBlank ) );
+
+        if ( pszDescription  )
+        {
+            strcpy( szDescription, pszDescription );
+        }
+        else
+        {
+            strcpy( szDescription, CPLSPrintf(
+                "(%s MDSYS.SDO_GEORASTER)", sColumn.c_str() ) );
+        }
+
+        //  ---------------------------------------------------------------
+        //  Insert parameters
+        //  ---------------------------------------------------------------
+
+        if( pszInsert )
+        {
+            sValues = pszInsert;
+
+            if( pszInsert[0] == '(' && sValues.ifind( "VALUES" ) == std::string::npos )
+            {
+                sValues = CPLSPrintf( "VALUES %s", pszInsert );
+            }
+        }
+        else
+        {
+            sValues = CPLSPrintf( "VALUES (SDO_GEOR.INIT(%s,%s))", szRDT, szRID );
+        }
     }
 
     //  -----------------------------------------------------------
@@ -811,15 +785,32 @@ bool GeoRasterWrapper::Create( char* pszDescription,
                 nRasterRows, nRasterColumns, nRasterBands );
         }
 
-        sFormat.append( CPLSPrintf( 
-                "%s "
-                "cellDepth=%s "
-                "interleaving=%s "
-                "compression=%s'",
-                sBlocking.c_str(),
-                sCellDepth.c_str(),
-                sInterleaving.c_str(),
-                sCompressionType.c_str() ) );
+        if( EQUALN( sCompressionType.c_str(), "JPEG", 4 ) )
+        {
+            sFormat.append( CPLSPrintf( 
+                    "%s "
+                    "cellDepth=%s "
+                    "interleaving=%s "
+                    "compression=%s "
+                    "quality=%d'",
+                    sBlocking.c_str(),
+                    sCellDepth.c_str(),
+                    sInterleaving.c_str(),
+                    sCompressionType.c_str(),
+                    nCompressQuality) );
+        }
+        else
+        {
+            sFormat.append( CPLSPrintf( 
+                    "%s "
+                    "cellDepth=%s "
+                    "interleaving=%s "
+                    "compression=%s'",
+                    sBlocking.c_str(),
+                    sCellDepth.c_str(),
+                    sInterleaving.c_str(),
+                    sCompressionType.c_str() ) );
+        }
     }
     else
     {
@@ -896,13 +887,11 @@ bool GeoRasterWrapper::Create( char* pszDescription,
     if( bUpdate )
     {
         sCommand = CPLSPrintf(
-            "UPDATE %s%s T SET %s = %s WHERE %s RETURNING %s INTO GR1;",
+            "SELECT %s INTO GR1 FROM %s%s T WHERE %s FOR UPDATE;",
+            sColumn.c_str(),
             sSchema.c_str(),
             sTable.c_str(),
-            sColumn.c_str(),
-            szCreateBlank,
-            sWhere.c_str(),
-            sColumn.c_str() );
+            sWhere.c_str() );
     }
     else
     {
@@ -910,7 +899,7 @@ bool GeoRasterWrapper::Create( char* pszDescription,
             "INSERT INTO %s%s %s RETURNING %s INTO GR1;",
             sSchema.c_str(),
             sTable.c_str(),
-            szInsert,
+            sValues.c_str(),
             sColumn.c_str() );
     }
 
@@ -934,6 +923,8 @@ bool GeoRasterWrapper::Create( char* pszDescription,
             "BEGIN\n"
             "\n"
             "  %s\n"
+            "\n"
+            "  GR1.spatialExtent := NULL;\n"
             "\n"
             "  SELECT GR1.RASTERDATATABLE INTO :rdt FROM DUAL;\n"
             "  SELECT GR1.RASTERID        INTO :rid FROM DUAL;\n"
@@ -1012,6 +1003,23 @@ bool GeoRasterWrapper::Create( char* pszDescription,
     //  Procedure for Server version older than 11
     //  -----------------------------------------------------------
 
+    char szCreateBlank[OWTEXT];
+
+    if( nRasterBands == 1 )
+    {
+        strcpy( szCreateBlank, CPLSPrintf( "SDO_GEOR.createBlank(20001, "
+            "SDO_NUMBER_ARRAY(0, 0), "
+            "SDO_NUMBER_ARRAY(%d, %d), 0, :rdt, :rid)",
+            nRasterRows, nRasterColumns ) );
+    }
+    else
+    {
+        strcpy( szCreateBlank, CPLSPrintf( "SDO_GEOR.createBlank(21001, "
+            "SDO_NUMBER_ARRAY(0, 0, 0), "
+            "SDO_NUMBER_ARRAY(%d, %d, %d), 0, :rdt, :rid)",
+            nRasterRows, nRasterColumns, nRasterBands ) );
+    }
+
     poStmt = poConnection->CreateStatement( CPLSPrintf(
         "DECLARE\n"
         "  W    NUMBER          := :1;\n"
@@ -1036,13 +1044,12 @@ bool GeoRasterWrapper::Create( char* pszDescription,
         "  SELECT %s INTO GR2 FROM %s%s T WHERE"
         " T.%s.RasterDataTable = :rdt AND"
         " T.%s.RasterId = :rid FOR UPDATE;\n"
-        "  SELECT %s INTO GR1 FROM %s%s T WHERE"
-        " T.%s.RasterDataTable = :rdt AND"
-        " T.%s.RasterId = :rid;\n"
+        "\n"
+        "  GR1 := %s;\n"
         "\n"
         "  SDO_GEOR.changeFormatCopy(GR1, '%s', GR2);\n"
         "\n"
-        "  UPDATE %s%s T SET %s = GR2     WHERE"
+        "  UPDATE %s%s T SET %s = GR2 WHERE"
         " T.%s.RasterDataTable = :rdt AND"
         " T.%s.RasterId = :rid;\n"
         "\n"
@@ -1074,10 +1081,6 @@ bool GeoRasterWrapper::Create( char* pszDescription,
         "    END LOOP;\n"
         "  END LOOP;\n"
         "\n"
-        "  SELECT %s INTO GR1 FROM %s%s T WHERE"
-        " T.%s.RasterDataTable = :rdt AND"
-        " T.%s.RasterId = :rid FOR UPDATE;\n"
-        "\n"
         "  SDO_GEOR.georeference(GR1, %d, %d,"
         " SDO_NUMBER_ARRAY(1.0, 0.0, 0.0),"
         " SDO_NUMBER_ARRAY(0.0, 1.0, 0.0));\n"
@@ -1093,13 +1096,11 @@ bool GeoRasterWrapper::Create( char* pszDescription,
             sCommand.c_str(),
             sColumn.c_str(), sSchema.c_str(), sTable.c_str(),
             sColumn.c_str(), sColumn.c_str(),
-            sColumn.c_str(), sSchema.c_str(), sTable.c_str(),
-            sColumn.c_str(), sColumn.c_str(), 
-            sFormat.c_str(), sSchema.c_str(), sTable.c_str(),
+            szCreateBlank,
+            sFormat.c_str(), 
+            sSchema.c_str(), sTable.c_str(),
             sColumn.c_str(), sColumn.c_str(), sColumn.c_str(),
             sSchema.c_str(), sSchema.c_str(), sSchema.c_str(),
-            sColumn.c_str(), sSchema.c_str(), sTable.c_str(),
-            sColumn.c_str(), sColumn.c_str(),
             UNKNOWN_CRS, MCL_DEFAULT,
             sSchema.c_str(), sTable.c_str(),
             sColumn.c_str(), sColumn.c_str(), sColumn.c_str() ) );
@@ -1162,7 +1163,9 @@ void GeoRasterWrapper::PrepareToOverwrite( void )
     bUpdate             = false;
     bInitializeIO       = false;
     bFlushMetadata      = false;
-    nSRID               = UNKNOWN_CRS;
+    nSRID               = 0;
+    nExtentSRID         = 0;
+    bGenSpatialIndex    = false;
     nPyramidMaxLevel    = 0;
     nBlockCount         = 0L;
     sDInfo.global_state = 0;
@@ -1207,11 +1210,6 @@ bool GeoRasterWrapper::Delete( void )
 
 void GeoRasterWrapper::SetGeoReference( int nSRIDIn )
 {
-    if( nSRIDIn == 0 )
-    {
-        nSRIDIn = UNKNOWN_CRS;
-    }
-
     nSRID = nSRIDIn;
 
     bIsReferenced = true;
@@ -1278,10 +1276,10 @@ void GeoRasterWrapper::GetRasterInfo( void )
     //  -------------------------------------------------------------------
 
     anULTCoordinate[0] = atoi(CPLGetXMLValue( 
-            phMetadata, "rasterInfo.ULTCoordinate.row", "0"));
+            phMetadata, "rasterInfo.ULTCoordinate.column", "0"));
 
     anULTCoordinate[1] = atoi(CPLGetXMLValue( 
-            phMetadata, "rasterInfo.ULTCoordinate.column", "0"));
+            phMetadata, "rasterInfo.ULTCoordinate.row", "0"));
 
     anULTCoordinate[2] = atoi(CPLGetXMLValue( 
             phMetadata, "rasterInfo.ULTCoordinate.band", "0"));
@@ -1346,6 +1344,11 @@ void GeoRasterWrapper::GetRasterInfo( void )
     {
         nCompressQuality = atoi( CPLGetXMLValue( phMetadata,
                             "rasterInfo.compression.quality", "75" ) );
+    }
+
+    if( EQUALN( sCompressionType.c_str(), "JPEG", 4 ) )
+    {
+        sInterleaving = "BIP";
     }
 
     //  -------------------------------------------------------------------
@@ -2564,14 +2567,14 @@ char* GeoRasterWrapper::GetVAT( int nBand )
 
 bool GeoRasterWrapper::FlushMetadata()
 {
+    if( bFlushBlock )
+    {
+        FlushBlock( nCacheBlockId );
+    }
+
     if( ! bFlushMetadata )
     {
         return true;
-    }
-
-    if( bFlushBlock ) // Flush the block in cache
-    {
-        FlushBlock( nCacheBlockId );
     }
 
     bFlushMetadata = false;
@@ -2696,49 +2699,63 @@ bool GeoRasterWrapper::FlushMetadata()
         return false;
     }
 
-    CPLDebug("GEOR","Binds( %ld, %d, %f, %f, %f, %f, %f, %f )", 
-                  nSRID,
-                  nMLC,
-                  dfXCoef[0],
-                  dfXCoef[1],
-                  dfXCoef[2],
-                  dfYCoef[0],
-                  dfYCoef[1],
-                  dfYCoef[2] );
+    if( bGenSpatialIndex )
+    {
+        nExtentSRID = nExtentSRID == 0 ? nSRID : nExtentSRID;
+    }
+    else
+    {
+        nExtentSRID = 0; /* Set spatialExtent to null */
+    }
+
+    int nException = 0;
 
     OCILobLocator* phLocator = NULL;
 
     OWStatement* poStmt = poConnection->CreateStatement( CPLSPrintf(
         "DECLARE\n"
-        "  GR1  sdo_georaster;\n"
-        "  SRID number;\n"
-        "  VAT varchar2(128);\n"
+        "  GR1      sdo_georaster;\n"
+        "  GM1      sdo_geometry;\n"
+        "  SRID     number  := :1;\n"
+        "  EXT_SRID number  := :2;\n"
+        "  VAT      varchar2(128);\n"
         "BEGIN\n"
         "\n"
         "  SELECT %s INTO GR1 FROM %s%s T WHERE %s FOR UPDATE;\n"
         "\n"
-        "  GR1.metadata := sys.xmltype.createxml(:1);\n"
+        "  GR1.metadata := sys.xmltype.createxml(:3);\n"
         "\n"
-        "  SRID := :2;\n"
-        "  IF SRID = 0 THEN\n"
-        "    SRID := %d;\n"
+        "  IF SRID != 0 THEN\n"
+        "    SDO_GEOR.georeference( GR1, SRID, :4,"
+        "      SDO_NUMBER_ARRAY(:5, :6, :7), SDO_NUMBER_ARRAY(:8, :9, :10));\n"
         "  END IF;\n"
         "\n"
-        "  SDO_GEOR.georeference( GR1, SRID, :3,"
-        "  SDO_NUMBER_ARRAY(:4, :5, :6), SDO_NUMBER_ARRAY(:7, :8, :9));\n"
-        "\n"
-        "  IF SRID = %d THEN\n"
-        "    GR1.spatialExtent := NULL;\n"
+        "  IF EXT_SRID = 0 THEN\n"
+        "    GM1 := NULL;\n"
         "  ELSE\n"
-        "    GR1.spatialExtent := SDO_GEOR.generateSpatialExtent( GR1 );\n"
+        "    GM1 := SDO_GEOR.generateSpatialExtent( GR1 );\n"
+        "    IF EXT_SRID != SRID THEN\n"
+        "      GM1 := SDO_CS.transform( GM1, EXT_SRID );\n"
+        "    END IF;\n"
         "  END IF;\n"
+        "\n"
+        "  GR1.spatialExtent := GM1;\n"
         "\n"
         "  VAT := '%s';\n"
         "  IF VAT != '' THEN\n"
         "    SDO_GEOR.setVAT(GR1, 1, VAT);\n"
         "  END IF;\n"
         "\n"
-        "  UPDATE %s%s T SET %s = GR1 WHERE %s;\n"
+        "  BEGIN\n"
+        "    UPDATE %s%s T SET %s = GR1\n"
+        "    WHERE %s;\n"
+        "  EXCEPTION\n"
+        "    WHEN OTHERS THEN\n"
+        "      :except := SQLCODE;\n"
+        "      IF (SQLCODE != -29877) THEN\n"
+        "        RAISE;\n"
+        "      END IF;\n"
+        "  END\n"
         "\n"
         "  COMMIT;\n"
         "END;",
@@ -2746,8 +2763,6 @@ bool GeoRasterWrapper::FlushMetadata()
             sSchema.c_str(),
             sTable.c_str(),
             sWhere.c_str(),
-            UNKNOWN_CRS,
-            UNKNOWN_CRS,
             sValueAttributeTab.c_str(),
             sSchema.c_str(),
             sTable.c_str(),
@@ -2756,8 +2771,9 @@ bool GeoRasterWrapper::FlushMetadata()
 
     poStmt->WriteCLob( &phLocator, pszMetadata );
     
-    poStmt->Bind( &phLocator );
     poStmt->Bind( &nSRID );
+    poStmt->Bind( &nExtentSRID );
+    poStmt->Bind( &phLocator );
     poStmt->Bind( &nMLC );
     poStmt->Bind( &dfXCoef[0] );
     poStmt->Bind( &dfXCoef[1] );
@@ -2765,6 +2781,7 @@ bool GeoRasterWrapper::FlushMetadata()
     poStmt->Bind( &dfYCoef[0] );
     poStmt->Bind( &dfYCoef[1] );
     poStmt->Bind( &dfYCoef[2] );
+    poStmt->BindName( ":except", &nException );
 
     CPLFree( pszMetadata );
 
@@ -2778,6 +2795,12 @@ bool GeoRasterWrapper::FlushMetadata()
     OCIDescriptorFree( phLocator, OCI_DTYPE_LOB );
 
     delete poStmt;
+
+    if( nException )
+    {
+        CPLError( CE_Warning, CPLE_AppDefined, 
+            "Cannot generate spatialExtent! (ORA%ld) ", nException );
+    }
 
     return true;
 }

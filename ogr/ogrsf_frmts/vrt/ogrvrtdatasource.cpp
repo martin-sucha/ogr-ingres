@@ -1,5 +1,5 @@
 /******************************************************************************
- * $Id: ogrvrtdatasource.cpp 17506 2009-08-02 17:09:10Z rouault $
+ * $Id: ogrvrtdatasource.cpp 24156 2012-03-23 21:48:56Z warmerdam $
  *
  * Project:  OpenGIS Simple Features Reference Implementation
  * Purpose:  Implements OGRVRTDataSource class.
@@ -31,7 +31,8 @@
 #include "cpl_conv.h"
 #include "cpl_string.h"
 
-CPL_CVSID("$Id: ogrvrtdatasource.cpp 17506 2009-08-02 17:09:10Z rouault $");
+CPL_CVSID("$Id: ogrvrtdatasource.cpp 24156 2012-03-23 21:48:56Z warmerdam $");
+
 /************************************************************************/
 /*                          OGRVRTDataSource()                          */
 /************************************************************************/
@@ -42,6 +43,8 @@ OGRVRTDataSource::OGRVRTDataSource()
     pszName = NULL;
     papoLayers = NULL;
     nLayers = 0;
+    psTree = NULL;
+    nCallLevel = 0;
 }
 
 /************************************************************************/
@@ -59,6 +62,9 @@ OGRVRTDataSource::~OGRVRTDataSource()
         delete papoLayers[i];
     
     CPLFree( papoLayers );
+
+    if( psTree != NULL)
+        CPLDestroyXMLNode( psTree );
 }
 
 /************************************************************************/
@@ -71,20 +77,35 @@ int OGRVRTDataSource::Initialize( CPLXMLNode *psTree, const char *pszNewName,
 {
     CPLAssert( nLayers == 0 );
 
+    this->psTree = psTree;
+
 /* -------------------------------------------------------------------- */
 /*      Set name, and capture the directory path so we can use it       */
 /*      for relative datasources.                                       */
 /* -------------------------------------------------------------------- */
-    char *pszVRTDirectory = CPLStrdup( CPLGetPath( pszNewName ) );
+    CPLString osVRTDirectory = CPLGetPath( pszNewName );
 
     pszName = CPLStrdup( pszNewName );
+
+/* -------------------------------------------------------------------- */
+/*      Look for the OGRVRTDataSource node, it might be after an        */
+/*      <xml> node.                                                     */
+/* -------------------------------------------------------------------- */
+    CPLXMLNode *psVRTDSXML = CPLGetXMLNode( psTree, "=OGRVRTDataSource" );
+    if( psVRTDSXML == NULL )
+    {
+        CPLError( CE_Failure, CPLE_AppDefined, 
+                  "Did not find the <OGRVRTDataSource> node in the root of the document,\n"
+                  "this is not really an OGR VRT." );
+        return FALSE;
+    }
 
 /* -------------------------------------------------------------------- */
 /*      Look for layers.                                                */
 /* -------------------------------------------------------------------- */
     CPLXMLNode *psLTree;
 
-    for( psLTree=psTree->psChild; psLTree != NULL; psLTree=psLTree->psNext )
+    for( psLTree=psVRTDSXML->psChild; psLTree != NULL; psLTree=psLTree->psNext )
     {
         if( psLTree->eType != CXT_Element
             || !EQUAL(psLTree->pszValue,"OGRVRTLayer") )
@@ -95,11 +116,10 @@ int OGRVRTDataSource::Initialize( CPLXMLNode *psTree, const char *pszNewName,
 /* -------------------------------------------------------------------- */
         OGRVRTLayer  *poLayer;
         
-        poLayer = new OGRVRTLayer();
+        poLayer = new OGRVRTLayer(this);
         
-        if( !poLayer->Initialize( psLTree, pszVRTDirectory, bUpdate ) )
+        if( !poLayer->FastInitialize( psLTree, osVRTDirectory, bUpdate ) )
         {
-            CPLFree( pszVRTDirectory );
             delete poLayer;
             return FALSE;
         }
@@ -112,7 +132,6 @@ int OGRVRTDataSource::Initialize( CPLXMLNode *psTree, const char *pszNewName,
         papoLayers[nLayers++] = poLayer;
     }
 
-    CPLFree( pszVRTDirectory );
     return TRUE;
 }
 
@@ -137,4 +156,22 @@ OGRLayer *OGRVRTDataSource::GetLayer( int iLayer )
         return NULL;
     else
         return papoLayers[iLayer];
+}
+
+/************************************************************************/
+/*                         AddForbiddenNames()                          */
+/************************************************************************/
+
+void OGRVRTDataSource::AddForbiddenNames(const char* pszOtherDSName)
+{
+    aosOtherDSNameSet.insert(pszOtherDSName);
+}
+
+/************************************************************************/
+/*                         IsInForbiddenNames()                         */
+/************************************************************************/
+
+int OGRVRTDataSource::IsInForbiddenNames(const char* pszOtherDSName)
+{
+    return aosOtherDSNameSet.find(pszOtherDSName) != aosOtherDSNameSet.end();
 }

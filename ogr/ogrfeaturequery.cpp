@@ -1,5 +1,5 @@
 /******************************************************************************
- * $Id: ogrfeaturequery.cpp 21298 2010-12-20 10:58:34Z rouault $
+ * $Id: ogrfeaturequery.cpp 23940 2012-02-11 10:19:28Z rouault $
  * 
  * Project:  OpenGIS Simple Features Reference Implementation
  * Purpose:  Implementation of simple SQL WHERE style attributes queries
@@ -34,7 +34,7 @@
 #include "ogr_p.h"
 #include "ogr_attrind.h"
 
-CPL_CVSID("$Id: ogrfeaturequery.cpp 21298 2010-12-20 10:58:34Z rouault $");
+CPL_CVSID("$Id: ogrfeaturequery.cpp 23940 2012-02-11 10:19:28Z rouault $");
 
 /************************************************************************/
 /*     Support for special attributes (feature query and selection)     */
@@ -293,7 +293,10 @@ long *OGRFeatureQuery::EvaluateAgainstIndices( OGRLayer *poLayer,
             switch( poFieldDefn->GetType() )
             {
               case OFTInteger:
-                sValue.Integer = psExpr->papoSubExpr[iIN]->int_value;
+                if (psExpr->papoSubExpr[iIN]->field_type == SWQ_FLOAT)
+                    sValue.Integer = (int) psExpr->papoSubExpr[iIN]->float_value;
+                else
+                    sValue.Integer = psExpr->papoSubExpr[iIN]->int_value;
                 break;
 
               case OFTReal:
@@ -326,7 +329,10 @@ long *OGRFeatureQuery::EvaluateAgainstIndices( OGRLayer *poLayer,
     switch( poFieldDefn->GetType() )
     {
       case OFTInteger:
-        sValue.Integer = poValue->int_value;
+        if (poValue->field_type == SWQ_FLOAT)
+            sValue.Integer = (int) poValue->float_value;
+        else
+            sValue.Integer = poValue->int_value;
         break;
         
       case OFTReal:
@@ -383,9 +389,9 @@ char **OGRFeatureQuery::FieldCollector( void *pBareOp,
         const char *pszFieldName;
 
         if( op->field_index >= poTargetDefn->GetFieldCount()
-            && op->field_index < poTargetDefn->GetFieldCount() + SPECIAL_FIELD_COUNT) 
-            pszFieldName = SpecialFieldNames[op->field_index];
-        else if( op->field_index >= 0 
+            && op->field_index < poTargetDefn->GetFieldCount() + SPECIAL_FIELD_COUNT)
+            pszFieldName = SpecialFieldNames[op->field_index - poTargetDefn->GetFieldCount()];
+        else if( op->field_index >= 0
                  && op->field_index < poTargetDefn->GetFieldCount() )
             pszFieldName = 
                 poTargetDefn->GetFieldDefn(op->field_index)->GetNameRef();

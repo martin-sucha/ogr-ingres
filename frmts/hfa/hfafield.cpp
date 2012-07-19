@@ -1,5 +1,5 @@
 /******************************************************************************
- * $Id: hfafield.cpp 21184 2010-12-01 03:11:03Z warmerdam $
+ * $Id: hfafield.cpp 24045 2012-03-01 18:46:25Z warmerdam $
  *
  * Project:  Erdas Imagine (.img) Translator
  * Purpose:  Implementation of the HFAField class for managing information
@@ -30,7 +30,7 @@
 
 #include "hfa_p.h"
 
-CPL_CVSID("$Id: hfafield.cpp 21184 2010-12-01 03:11:03Z warmerdam $");
+CPL_CVSID("$Id: hfafield.cpp 24045 2012-03-01 18:46:25Z warmerdam $");
 
 #define MAX_ENTRY_REPORT   16
                            
@@ -181,13 +181,18 @@ const char *HFAField::Initialize( const char * pszInput )
         int	nEnumCount = atoi(pszInput);
         int	iEnum;
 
+        if (nEnumCount < 0 || nEnumCount > 100000)
+            return NULL;
+
         pszInput = strchr(pszInput,':');
         if( pszInput == NULL )
             return NULL;
 
         pszInput++;
 
-        papszEnumNames = (char **) CPLCalloc(sizeof(char *), nEnumCount+1);
+        papszEnumNames = (char **) VSICalloc(sizeof(char *), nEnumCount+1);
+        if (papszEnumNames == NULL)
+            return NULL;
         
         for( iEnum = 0; iEnum < nEnumCount; iEnum++ )
         {
@@ -676,7 +681,7 @@ HFAField::SetInstValue( const char * pszField, int nIndexValue,
         // or type?
         
         if( nIndexValue == -3 )
-            nBaseItemType = nIntValue;
+            nBaseItemType = (GInt16) nIntValue;
         else if( nIndexValue == -2 )
             nColumns = nIntValue;
         else if( nIndexValue == -1 )
@@ -1015,6 +1020,25 @@ HFAField::ExtractInstValue( const char * pszField, int nIndexValue,
           else if( nIndexValue == -1 )
           {
               dfDoubleRet = nIntRet = nRows;
+          }
+          else if( nBaseItemType == EPT_u1 )
+          {
+              if (nIndexValue*8 >= nDataSize)
+              {
+                  CPLError(CE_Failure, CPLE_AppDefined, "Buffer too small");
+                  return FALSE;
+              }
+
+              if( pabyData[nIndexValue>>3] & (1 << (nIndexValue & 0x7)) )
+              {
+                  dfDoubleRet = 1;
+                  nIntRet = 1;
+              }
+              else
+              {
+                  dfDoubleRet = 0.0;
+                  nIntRet = 0;
+              }
           }
           else if( nBaseItemType == EPT_u8 )
           {

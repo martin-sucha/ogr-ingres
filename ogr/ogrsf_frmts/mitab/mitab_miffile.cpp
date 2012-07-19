@@ -1,5 +1,5 @@
 /**********************************************************************
- * $Id: mitab_miffile.cpp,v 1.55 2010-10-08 18:50:52 aboudreault Exp $
+ * $Id: mitab_miffile.cpp,v 1.58 2011-09-22 21:57:46 dmorissette Exp $
  *
  * Name:     mitab_miffile.cpp
  * Project:  MapInfo TAB Read/Write library
@@ -32,6 +32,15 @@
  **********************************************************************
  *
  * $Log: mitab_miffile.cpp,v $
+ * Revision 1.58  2011-09-22 21:57:46  dmorissette
+ *  Fixed problem with tab delimiter used in MIF files (GDAL #4257)
+ *
+ * Revision 1.57  2010-10-15 12:06:44  aboudreault
+ * Fixed crash when trying to get the same mitab mif feature twice (GDAL #3765)
+ *
+ * Revision 1.56  2010-10-12 19:02:40  aboudreault
+ * Fixed incomplet patch to handle differently indented lines in mif files (gdal #3694)
+ *
  * Revision 1.55  2010-10-08 18:50:52  aboudreault
  * Fixed handle differently indented lines in mif files. (GDAL bug #3694)
  *
@@ -716,17 +725,37 @@ int  MIFFile::AddFields(const char *pszLine)
     }
     else if (numTok >= 2 && EQUAL(papszToken[1], "integer"))
     {
-        /*-------------------------------------------------
-         * INTEGER type
-         *------------------------------------------------*/
-        nStatus = AddFieldNative(papszToken[0], TABFInteger);
+        if (numTok == 2)
+        {
+            /*-------------------------------------------------
+             * INTEGER type without a specified width
+             *------------------------------------------------*/
+            nStatus = AddFieldNative(papszToken[0], TABFInteger);
+        }
+        else if (numTok > 2)
+        {
+            /*-------------------------------------------------
+             * INTEGER type with a specified width
+             *------------------------------------------------*/
+            nStatus = AddFieldNative(papszToken[0], TABFInteger, atoi(papszToken[2]));
+        }
     }
     else if (numTok >= 2 && EQUAL(papszToken[1], "smallint"))
     {
-        /*-------------------------------------------------
-         * SMALLINT type
-         *------------------------------------------------*/
-        nStatus = AddFieldNative(papszToken[0], TABFSmallInt);
+        if (numTok == 2)
+        {
+            /*-------------------------------------------------
+             * SMALLINT type without a specified width
+             *------------------------------------------------*/
+            nStatus = AddFieldNative(papszToken[0], TABFSmallInt);
+        }
+        else if (numTok > 2)
+        {
+            /*-------------------------------------------------
+             * SMALLINT type with a specified width
+             *------------------------------------------------*/
+            nStatus = AddFieldNative(papszToken[0], TABFSmallInt, atoi(papszToken[2]));
+        }
     }
     else if (numTok >= 4 && EQUAL(papszToken[1], "decimal"))
     {
@@ -877,7 +906,7 @@ void MIFFile::PreParseFile()
         }
 
         CSLDestroy(papszToken);
-        papszToken = CSLTokenizeString(pszLine);
+        papszToken = CSLTokenizeString2(pszLine, " \t", CSLT_HONOURSTRINGS);
 
         if (EQUALN(pszLine,"POINT",5))
         {
@@ -1058,8 +1087,13 @@ int MIFFile::WriteMIFHeader()
         switch(m_paeFieldType[iField])
         {
           case TABFInteger:
-            m_poMIFFile->WriteLine("  %s Integer\n",
+            if (poFieldDefn->GetWidth() == 0)
+                m_poMIFFile->WriteLine("  %s Integer\n",
                                    poFieldDefn->GetNameRef());
+            else
+                m_poMIFFile->WriteLine("  %s Integer(%d)\n",
+                                   poFieldDefn->GetNameRef(),
+                                   poFieldDefn->GetWidth());
             break;
           case TABFSmallInt:
             m_poMIFFile->WriteLine("  %s SmallInt\n",
@@ -1331,7 +1365,7 @@ TABFeature *MIFFile::GetFeatureRef(int nFeatureId)
         {
             // Special case, we need to know two lines to decide the type
             char **papszToken;
-            papszToken = CSLTokenizeString(pszLine);
+            papszToken = CSLTokenizeString2(pszLine, " \t", CSLT_HONOURSTRINGS);
             
             if (CSLCount(papszToken) !=3)
             {
@@ -1800,12 +1834,14 @@ int MIFFile::AddFieldNative(const char *pszName, TABFieldType eMapInfoType,
          * INTEGER type
          *------------------------------------------------*/
         poFieldDefn = new OGRFieldDefn(szNewFieldName, OFTInteger);
+        poFieldDefn->SetWidth(nWidth);
         break;
       case TABFSmallInt:
         /*-------------------------------------------------
          * SMALLINT type
          *------------------------------------------------*/
         poFieldDefn = new OGRFieldDefn(szNewFieldName, OFTInteger);
+        poFieldDefn->SetWidth(nWidth);
         break;
       case TABFDecimal:
         /*-------------------------------------------------

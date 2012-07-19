@@ -1,5 +1,5 @@
 /******************************************************************************
- * $Id: ogrvrtdriver.cpp 20996 2010-10-28 18:38:15Z rouault $
+ * $Id: ogrvrtdriver.cpp 24156 2012-03-23 21:48:56Z warmerdam $
  *
  * Project:  OpenGIS Simple Features Reference Implementation
  * Purpose:  Implements OGRVRTDriver class.
@@ -30,7 +30,7 @@
 #include "ogr_vrt.h"
 #include "cpl_conv.h"
 
-CPL_CVSID("$Id: ogrvrtdriver.cpp 20996 2010-10-28 18:38:15Z rouault $");
+CPL_CVSID("$Id: ogrvrtdriver.cpp 24156 2012-03-23 21:48:56Z warmerdam $");
 
 /************************************************************************/
 /*                            ~OGRVRTDriver()                            */
@@ -81,26 +81,27 @@ OGRDataSource *OGRVRTDriver::Open( const char * pszFilename,
     else
     {
         VSILFILE *fp;
-        char achHeader[18];
-
-        VSIStatBufL sStatBuf;
-        if (VSIStatExL( pszFilename, &sStatBuf, VSI_STAT_EXISTS_FLAG | VSI_STAT_NATURE_FLAG ) != 0 ||
-            VSI_ISDIR(sStatBuf.st_mode))
-            return FALSE;
+        char achHeader[512];
 
         fp = VSIFOpenL( pszFilename, "rb" );
 
         if( fp == NULL )
             return NULL;
 
-        if( VSIFReadL( achHeader, sizeof(achHeader), 1, fp ) != 1 )
+        memset( achHeader, 0, sizeof(achHeader) );
+        VSIFReadL( achHeader, 1, sizeof(achHeader)-1, fp );
+
+        if( strstr(achHeader,"<OGRVRTDataSource") == NULL )
         {
             VSIFCloseL( fp );
             return NULL;
         }
 
-        if( !EQUALN(achHeader,"<OGRVRTDataSource>",18) )
+        VSIStatBufL sStatBuf;
+        if ( VSIStatL( pszFilename, &sStatBuf ) != 0 ||
+             sStatBuf.st_size > 1024 * 1024 )
         {
+            CPLDebug( "VRT", "Unreasonable long file, not likely really VRT" );
             VSIFCloseL( fp );
             return NULL;
         }
@@ -108,10 +109,8 @@ OGRDataSource *OGRVRTDriver::Open( const char * pszFilename,
 /* -------------------------------------------------------------------- */
 /*      It is the right file, now load the full XML definition.         */
 /* -------------------------------------------------------------------- */
-        int nLen;
+        int nLen = (int) sStatBuf.st_size;
 
-        VSIFSeekL( fp, 0, SEEK_END );
-        nLen = (int) VSIFTellL( fp );
         VSIFSeekL( fp, 0, SEEK_SET );
 
         pszXML = (char *) VSIMalloc(nLen+1);
@@ -144,14 +143,13 @@ OGRDataSource *OGRVRTDriver::Open( const char * pszFilename,
 /*      Create a virtual datasource configured based on this XML input. */
 /* -------------------------------------------------------------------- */
     poDS = new OGRVRTDataSource();
+    poDS->SetDriver(this);
+    /* psTree is owned by poDS */
     if( !poDS->Initialize( psTree, pszFilename, bUpdate ) )
     {
-        CPLDestroyXMLNode( psTree );
         delete poDS;
         return NULL;
     }
-
-    CPLDestroyXMLNode( psTree );
 
     return poDS;
 }
@@ -175,4 +173,3 @@ void RegisterOGRVRT()
 {
     OGRSFDriverRegistrar::GetRegistrar()->RegisterDriver( new OGRVRTDriver );
 }
-

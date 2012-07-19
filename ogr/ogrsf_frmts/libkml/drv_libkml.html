@@ -133,6 +133,12 @@
      the styleurl is copyed to the style string.
   </p>
     
+  <p>
+     When reading a kml StyleMap the default mapping is set to normal. If you
+     wish to use the highlighted styles set the enviroment variable
+     LIBKML_STYLEMAP_KEY to "highlight"
+  </p>
+    
   <h2>Fields</h2>
   
   <p> OGR fields (feature atributes) are mapped to kml with
@@ -250,7 +256,16 @@
     Setting the enviroment variable LIBKML_WRAPDATELINE to "yes" will cause the
     libkml driver to split the geometry at the dateline when read.
   </p>
-  
+
+<h2>VSI Virtual File System API support</h2>
+
+(Some features below might require OGR >= 1.9.0)<p>
+
+The driver supports reading and writing to files managed by VSI Virtual File System API, which include
+"regular" files, as well as files in the /vsizip/ (read-write) , /vsigzip/ (read-write) , /vsicurl/ (read-only) domains.<p>
+
+Writing to /dev/stdout or /vsistdout/ is also supported.<p>
+
   <h2>Example</h2>
  
   <p>

@@ -1,5 +1,5 @@
 /******************************************************************************
- * $Id: gdaljp2metadata.cpp 22650 2011-07-06 00:59:22Z warmerdam $
+ * $Id: gdaljp2metadata.cpp 24406 2012-05-11 19:51:29Z aboudreault $
  *
  * Project:  GDAL 
  * Purpose:  GDALJP2Metadata - Read GeoTIFF and/or GML georef info.
@@ -35,7 +35,7 @@
 #include "ogr_api.h"
 #include "gt_wkt_srs_for_gdal.h"
 
-CPL_CVSID("$Id: gdaljp2metadata.cpp 22650 2011-07-06 00:59:22Z warmerdam $");
+CPL_CVSID("$Id: gdaljp2metadata.cpp 24406 2012-05-11 19:51:29Z aboudreault $");
 
 static const unsigned char msi_uuid2[16] =
 {0xb1,0x4b,0xf8,0xbd,0x08,0x3d,0x4b,0x43,
@@ -44,6 +44,10 @@ static const unsigned char msi_uuid2[16] =
 static const unsigned char msig_uuid[16] = 
 { 0x96,0xA9,0xF1,0xF1,0xDC,0x98,0x40,0x2D,
   0xA7,0xAE,0xD6,0x8E,0x34,0x45,0x18,0x09 };
+
+static const unsigned char xmp_uuid[16] =
+{ 0xBE,0x7A,0xCF,0xCB,0x97,0xA9,0x42,0xE8,
+  0x9C,0x71,0x99,0x94,0x91,0xE3,0xAF,0xAC};
 
 /************************************************************************/
 /*                          GDALJP2Metadata()                           */
@@ -58,12 +62,15 @@ GDALJP2Metadata::GDALJP2Metadata()
     pasGCPList = NULL;
 
     papszGMLMetadata = NULL;
+    papszMetadata = NULL;
 
     nGeoTIFFSize = 0;
     pabyGeoTIFFData = NULL;
 
     nMSIGSize = 0;
     pabyMSIGData = NULL;
+
+    pszXMPMetadata = NULL;
 
     bHaveGeoTransform = FALSE;
     adfGeoTransform[0] = 0.0;
@@ -91,6 +98,8 @@ GDALJP2Metadata::~GDALJP2Metadata()
     CPLFree( pabyGeoTIFFData );
     CPLFree( pabyMSIGData );
     CSLDestroy( papszGMLMetadata );
+    CSLDestroy( papszMetadata );
+    CPLFree( pszXMPMetadata );
 }
 
 /************************************************************************/
@@ -211,7 +220,7 @@ int GDALJP2Metadata::ReadBoxes( VSILFILE *fpVSIL )
         if( EQUAL(oBox.GetType(),"uuid") 
             && memcmp( oBox.GetUUID(), msi_uuid2, 16 ) == 0 )
         {
-	    nGeoTIFFSize = (int) oBox.GetDataLength();
+            nGeoTIFFSize = (int) oBox.GetDataLength();
             pabyGeoTIFFData = oBox.ReadBoxData();
         }
 
@@ -221,7 +230,7 @@ int GDALJP2Metadata::ReadBoxes( VSILFILE *fpVSIL )
         if( EQUAL(oBox.GetType(),"uuid") 
             && memcmp( oBox.GetUUID(), msig_uuid, 16 ) == 0 )
         {
-	    nMSIGSize = (int) oBox.GetDataLength();
+            nMSIGSize = (int) oBox.GetDataLength();
             pabyMSIGData = oBox.ReadBoxData();
 
             if( nMSIGSize < 70 
@@ -231,6 +240,16 @@ int GDALJP2Metadata::ReadBoxes( VSILFILE *fpVSIL )
                 pabyMSIGData = NULL;
                 nMSIGSize = 0;
             }
+        }
+
+/* -------------------------------------------------------------------- */
+/*      Collect XMP box.                                                */
+/* -------------------------------------------------------------------- */
+        if( EQUAL(oBox.GetType(),"uuid")
+            && memcmp( oBox.GetUUID(), xmp_uuid, 16 ) == 0 &&
+            pszXMPMetadata == NULL )
+        {
+            pszXMPMetadata = (char*) oBox.ReadBoxData();
         }
 
 /* -------------------------------------------------------------------- */
@@ -306,17 +325,17 @@ int GDALJP2Metadata::ReadBoxes( VSILFILE *fpVSIL )
                             (nHorzNum/(double)nHorzDen) * pow(10.0,nHorzExp)/100;
                         CPLString osFormatter;
 
-                        papszGMLMetadata = CSLSetNameValue( 
-                            papszGMLMetadata, 
+                        papszMetadata = CSLSetNameValue( 
+                            papszMetadata, 
                             "TIFFTAG_XRESOLUTION",
                             osFormatter.Printf("%g",dfHorzRes) );
                         
-                        papszGMLMetadata = CSLSetNameValue( 
-                            papszGMLMetadata, 
+                        papszMetadata = CSLSetNameValue( 
+                            papszMetadata, 
                             "TIFFTAG_YRESOLUTION",
                             osFormatter.Printf("%g",dfVertRes) );
-                        papszGMLMetadata = CSLSetNameValue( 
-                            papszGMLMetadata, 
+                        papszMetadata = CSLSetNameValue( 
+                            papszMetadata, 
                             "TIFFTAG_RESOLUTIONUNIT", 
                             "3 (pixels/cm)" );
                         
@@ -762,13 +781,25 @@ int GDALJP2Metadata::ParseGMLCoverageDesc()
         adfGeoTransform[0] = adfGeoTransform[3];
         adfGeoTransform[3] = dfTemp;
 
+        int swapWith1Index = 4;
+        int swapWith2Index = 5;
+
+        if( CSLTestBoolean( CPLGetConfigOption( "GDAL_JP2K_ALT_OFFSETVECTOR_ORDER",
+                                                "FALSE" ) ) )
+        {
+            swapWith1Index = 5;
+            swapWith2Index = 4;
+            CPLDebug( "GMLJP2", "Choosing alternate GML \"<offsetVector>\" order based on "
+                "GDAL_JP2K_ALT_OFFSETVECTOR_ORDER." );
+        }
+
         dfTemp = adfGeoTransform[1];
-        adfGeoTransform[1] = adfGeoTransform[4];
-        adfGeoTransform[4] = dfTemp;
+        adfGeoTransform[1] = adfGeoTransform[swapWith1Index];
+        adfGeoTransform[swapWith1Index] = dfTemp;
 
         dfTemp = adfGeoTransform[2];
-        adfGeoTransform[2] = adfGeoTransform[5];
-        adfGeoTransform[5] = dfTemp;
+        adfGeoTransform[2] = adfGeoTransform[swapWith2Index];
+        adfGeoTransform[swapWith2Index] = dfTemp;
     }
 
     return pszProjection != NULL && bSuccess;
@@ -968,6 +999,23 @@ GDALJP2Box *GDALJP2Metadata::CreateGMLJP2( int nXSize, int nYSize )
         adfOrigin[0] = adfOrigin[1];
         adfOrigin[1] = dfTemp;
 
+        if( CSLTestBoolean( CPLGetConfigOption( "GDAL_JP2K_ALT_OFFSETVECTOR_ORDER",
+                                                "FALSE" ) ) )
+        {
+            CPLDebug( "GMLJP2", "Choosing alternate GML \"<offsetVector>\" order based on "
+                "GDAL_JP2K_ALT_OFFSETVECTOR_ORDER." );
+
+            /* In this case the swapping is done in an "X" pattern */
+            dfTemp = adfXVector[0];
+            adfXVector[0] = adfYVector[1];
+            adfYVector[1] = dfTemp;
+
+            dfTemp = adfYVector[0];
+            adfYVector[0] = adfXVector[1];
+            adfXVector[1] = dfTemp;
+        }
+        else
+        {
         dfTemp = adfXVector[0];
         adfXVector[0] = adfXVector[1];
         adfXVector[1] = dfTemp;
@@ -975,6 +1023,7 @@ GDALJP2Box *GDALJP2Metadata::CreateGMLJP2( int nXSize, int nYSize )
         dfTemp = adfYVector[0];
         adfYVector[0] = adfYVector[1];
         adfYVector[1] = dfTemp;
+        }
     }
 
 /* -------------------------------------------------------------------- */
@@ -986,7 +1035,7 @@ GDALJP2Box *GDALJP2Metadata::CreateGMLJP2( int nXSize, int nYSize )
 "<gml:FeatureCollection\n"
 "   xmlns:gml=\"http://www.opengis.net/gml\"\n"
 "   xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\"\n"
-"   xsi:schemaLocation=\"http://www.opengeospatial.net/gml http://schemas.opengis.net/gml/3.1.1/profiles/gmlJP2Profile/1.0.0/gmlJP2Profile.xsd\">\n"
+"   xsi:schemaLocation=\"http://www.opengis.net/gml http://schemas.opengis.net/gml/3.1.1/profiles/gmlJP2Profile/1.0.0/gmlJP2Profile.xsd\">\n"
 "  <gml:boundedBy>\n"
 "    <gml:Null>withheld</gml:Null>\n"
 "  </gml:boundedBy>\n"
