@@ -1158,7 +1158,7 @@ OGRFeature *OGRIngresTableLayer::GetFeature( long nFeatureId )
 /* -------------------------------------------------------------------- */
 /*      Issue the command.                                              */
 /* -------------------------------------------------------------------- */
-    CPLDebug("Ingres", osSqlCmd.c_str());
+    CPLDebug("Ingres", "%s", osSqlCmd.c_str());
     if (!oStmt.ExecuteSQL(osSqlCmd.c_str()))
     {
         return NULL;
@@ -1236,7 +1236,7 @@ int OGRIngresTableLayer::GetFeatureCount( int bForce )
         }        
     }
 
-    CPLDebug("Ingres", osSqlCmd.c_str());
+    CPLDebug("Ingres", "%s", osSqlCmd.c_str());
     /* -------------------------------------------------------------------- */
     /*  Execute SQL and get the result  									*/
     /* -------------------------------------------------------------------- */
@@ -1285,7 +1285,7 @@ OGRErr OGRIngresTableLayer::GetExtent(OGREnvelope *psExtent, int bForce )
 	osCommand.Printf( "SELECT asbinary(extent(%s)) FROM %s", 
         osGeomColumn.c_str(), 
         GetLayerDefn()->GetName());
-    CPLDebug("Ingres", osCommand.c_str());
+    CPLDebug("Ingres", "%s", osCommand.c_str());
 
     if (osWHERE.size())
     {

@@ -356,7 +356,7 @@ int OGRIngresDataSource::Open( const char *pszFullName,
             pszDBName       /* database name */
             );
         
-       CPLDebug("INGRES", pszDBTarget);
+       CPLDebug("INGRES", "%s", pszDBTarget);
     }
     else
     {

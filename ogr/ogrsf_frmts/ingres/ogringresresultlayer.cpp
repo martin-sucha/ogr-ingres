@@ -540,7 +540,7 @@ int OGRIngresResultLayer::GetFeatureCount( int bForce )
         OGRIngresLayer::BindQueryGeometry(&oStmt);
     }
     
-    CPLDebug("Ingres", osSqlCmd.c_str());
+    CPLDebug("Ingres", "%s", osSqlCmd.c_str());
 
     if (!oStmt.ExecuteSQL(osSqlCmd.c_str()))
     {
