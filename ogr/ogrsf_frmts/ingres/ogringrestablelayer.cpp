@@ -1172,7 +1172,7 @@ OGRFeature *OGRIngresTableLayer::GetFeature( long nFeatureId )
     {
         CPLError(CE_Failure, CPLE_AppDefined,
             "Can't get the result row which may be caused by query "
-            "error or result row of id %d is not exist."
+            "error or result row of id %ld is not exist."
             , nFeatureId);
         return NULL;
     }
